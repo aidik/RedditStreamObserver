@@ -7,8 +7,57 @@ import requests
 import json
 import os
 import logging
+import mysql.connector
+import hashlib
+
 
 logging.basicConfig(level=logging.INFO)
+
+def save_to_db(comment, response, report):
+    cnx = mysql.connector.connect(
+        host=os.environ['MYSQL_HOST'],
+        port=os.environ['MYSQL_PORT'],
+        database=os.environ['MYSQL_DB'],
+        user=os.environ['MYSQL_USER'],
+        password=os.environ['MYSQL_PASSWORD'])
+
+    selection_cursor = cnx.cursor(buffered=True)
+
+    hashMe = comment.author.name + comment.permalink + comment.body
+    hash = hashlib.sha256(hashMe.encode()).hexdigest()
+    print(hash)
+
+    select_hash = ("SELECT * FROM comments WHERE hash=%s")
+    selection_cursor.execute(select_hash, [hash])
+
+    if selection_cursor.rowcount > 0:
+        print("This comment is already svaed")
+    else:
+        insertion_cursor = cnx.cursor(buffered=True)
+        response = response[0] 
+        add_comment = ("INSERT INTO comments (hash, authorName, authorFullName, body, permlink, identityAttack, insult, obscene, severeToxicity, sexualExplicit, threat, toxicity, isToxic) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        comment_data = (
+            hash,
+            comment.author.name,
+            comment.author.fullname,
+            comment.body,
+            "https://www.reddit.com" + comment.permalink,
+            response["identity_attack"][0],
+            response["insult"][0],
+            response["obscene"][0],
+            response["severe_toxicity"][0],
+            response["sexual_explicit"][0],
+            response["threat"][0],
+            response["toxicity"][0],
+            report
+        )
+        
+        insertion_cursor.execute(add_comment, comment_data)
+        cnx.commit()
+        insertion_cursor.close()
+
+    selection_cursor.close()
+    cnx.close()
 
 
 def send_to_telegram(comment, toxiReport):
@@ -39,13 +88,11 @@ def console_log(response):
     logging.info("toxicity:\t\t" + json.dumps(response["toxicity"]))
 
 
-#def save_to_db():
-    #TO DO
-
 
 skip_existing_comments = False
 report_to_telegram = False
 report_to_slack = False
+record_to_db = False
 
 if os.environ['SKIP_EXISTING_COMMENTS'] == "True":
     skip_existing_comments = True
@@ -55,6 +102,10 @@ if os.environ['REPORT_TO_TELEGRAM'] == "True":
 
 if os.environ['REPORT_TO_SLACK'] == "True":
     report_to_slack = True
+
+if os.environ['RECORD_TO_DB'] == "True":
+    record_to_db = True    
+
 
 logging.info("REDDIT_CLIENT_ID: " + os.environ['REDDIT_CLIENT_ID'] + " type: " + type(os.environ['REDDIT_CLIENT_ID']).__name__)
 logging.info("REDDIT_CLIENT_SECRET: " + os.environ['REDDIT_CLIENT_SECRET'] + " type: " + type(os.environ['REDDIT_CLIENT_SECRET']).__name__)
@@ -68,6 +119,15 @@ logging.info("TELEGRAM_CHAT_ID: " + os.environ['TELEGRAM_CHAT_ID'] + " type: " +
 logging.info("REPORT_TO_SLACK: " + os.environ['REPORT_TO_SLACK'] + " type: " + type(os.environ['REPORT_TO_SLACK']).__name__)
 logging.info("report_to_slack: " + str(report_to_slack) + " type: " + type(report_to_slack).__name__)
 logging.info("SLACK_URL: " + os.environ['SLACK_URL'] + " type: " + type(os.environ['SLACK_URL']).__name__)
+logging.info("RECORD_TO_DB: " + os.environ['RECORD_TO_DB'] + " type: " + type(os.environ['RECORD_TO_DB']).__name__)
+logging.info("record_to_db: " + str(record_to_db) + " type: " + type(record_to_db).__name__)
+logging.info("MYSQL_HOST: " + os.environ['MYSQL_HOST'] + " type: " + type(os.environ['MYSQL_HOST']).__name__)
+logging.info("MYSQL_PORT: " + os.environ['MYSQL_PORT'] + " type: " + type(os.environ['MYSQL_PORT']).__name__)
+logging.info("MYSQL_DB: " + os.environ['MYSQL_DB'] + " type: " + type(os.environ['MYSQL_DB']).__name__)
+logging.info("MYSQL_USER: " + os.environ['MYSQL_USER'] + " type: " + type(os.environ['MYSQL_USER']).__name__)
+logging.info("MYSQL_PASSWORD: " + os.environ['MYSQL_PASSWORD'] + " type: " + type(os.environ['MYSQL_PASSWORD']).__name__)
+
+
 
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
@@ -121,7 +181,9 @@ for comment in reddit.subreddit("truenas").stream.comments(skip_existing=skip_ex
 
         if report_to_slack == True:
             send_to_slack(comment, toxiReport)
-
+    
+    if record_to_db == True:
+        save_to_db(comment, json_res, report)
 
 
 
